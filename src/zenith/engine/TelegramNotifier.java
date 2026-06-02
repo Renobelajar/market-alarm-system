@@ -8,7 +8,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 public class TelegramNotifier {
-    private static final String BOT_TOKEN = "8582876329:AAHcacE3oEFAUzZfYRwsZ-IyZE63uousY28";
+    private static final String BOT_TOKEN = "rahasia anjir ke leak semoga ga ke leak sialan gue lupa hide";
     private static final String CHAT_ID = "@botmarketwr100";
 
     public static void sendAlertAsync(String message) {

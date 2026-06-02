@@ -2,7 +2,7 @@ package zenith.models;
 
 public class Candle {
     private double open, high, low, close;
-    private long timestamp; // Menyimpan waktu candle
+    private long timestamp;
 
     public Candle(double openPrice, long timestamp) {
         this.open = openPrice;

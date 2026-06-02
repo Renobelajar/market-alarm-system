@@ -25,17 +25,17 @@ public class MarketThread implements Runnable {
             try {
                 for (int i = 0; i < marketAssets.size(); i++) {
                     Asset asset = marketAssets.get(i);
-                    asset.simulateTick(); // Sudah nggak butuh parameter, otomatis dari dalam kelas!
-                    
+                    asset.simulateTick();
+
                     final int rowIndex = i;
                     final double newPrice = asset.getCurrentPrice();
-                    
+
                     SwingUtilities.invokeLater(() -> {
                         tableModel.setValueAt(String.format("%.2f", newPrice), rowIndex, 2);
                         if (chartPanel != null) chartPanel.repaint();
                     });
                 }
-                Thread.sleep(200); // 1 Tick = 200 ms
+                Thread.sleep(1000);
             } catch (InterruptedException e) {
                 System.out.println("[ERROR] Thread terhenti.");
             }

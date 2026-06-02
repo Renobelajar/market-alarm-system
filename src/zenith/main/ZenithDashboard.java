@@ -2,6 +2,7 @@ package zenith.main;
 
 import zenith.database.AssetDAO;
 import zenith.engine.MarketThread;
+import zenith.engine.BinanceFetcher;
 import zenith.models.Asset;
 
 import javax.swing.*;
@@ -19,45 +20,39 @@ public class ZenithDashboard extends JFrame {
     private List<Asset> activeAssets;
 
     public ZenithDashboard() {
-        // 1. Setup Basic Frame
-        setTitle("Zenith: High-Frequency Market Watcher (SMC Edition)");
-        setSize(1200, 700); // Ukuran lebih luas biar chart lega
+        setTitle("Zenith: High-Frequency Market Watcher (Binance Live Edition)");
+        setSize(1200, 700);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
-        setLocationRelativeTo(null); 
+        setLocationRelativeTo(null);
 
-        // 2. Inisialisasi DAO & Chart Panel
         assetDAO = new AssetDAO();
         chartPanel = new CandlestickPanel();
-        
-        // 3. Setup Tabel Sidebar Kiri (Dark Theme)
+
         String[] columns = {"Symbol", "Type", "Live Price"};
         model = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false; // Tabel Read-Only
+                return false;
             }
         };
         table = new JTable(model);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        table.setBackground(new Color(33, 37, 43)); 
+        table.setBackground(new Color(33, 37, 43));
         table.setForeground(Color.WHITE);
         table.setRowHeight(30);
-        
+
         JScrollPane tableScrollPane = new JScrollPane(table);
         tableScrollPane.setPreferredSize(new Dimension(300, 0));
 
-        // 4. SplitPane (Kiri Tabel, Kanan Chart)
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tableScrollPane, chartPanel);
         splitPane.setDividerLocation(300);
         splitPane.setDividerSize(3);
         add(splitPane, BorderLayout.CENTER);
 
-        // 5. Panel Kontrol Bawah (Timeframe & Tombol)
         JPanel bottomPanel = new JPanel();
         bottomPanel.setBackground(new Color(30, 33, 39));
-        
-        // --- Komponen Panel Bawah ---
+
         String[] tfOptions = {
             "TF: 5 Detik", "TF: 15 Detik", "TF: 30 Detik",
             "TF: 1 Menit", "TF: 5 Menit", "TF: 15 Menit",
@@ -65,13 +60,13 @@ public class ZenithDashboard extends JFrame {
             "TF: 1 Minggu", "TF: 1 Bulan"
         };
         JComboBox<String> cbTimeframe = new JComboBox<>(tfOptions);
-        
-        JButton btnAdd = new JButton("➕ Tambah");
+
+        JButton btnAdd = new JButton("➕ Tambah Asset");
         JButton btnUpdate = new JButton("✏️ Edit");
         JButton btnDelete = new JButton("🗑️ Hapus");
-        JToggleButton btnDraw = new JToggleButton("🖍️ Draw"); 
-        JToggleButton btnAlert = new JToggleButton("🔔 Set Alert"); 
-        
+        JToggleButton btnDraw = new JToggleButton("🖍️ Draw");
+        JToggleButton btnAlert = new JToggleButton("🔔 Set Alert");
+
         bottomPanel.add(new JLabel("⏳ "));
         bottomPanel.add(cbTimeframe);
         bottomPanel.add(btnAdd);
@@ -82,10 +77,8 @@ public class ZenithDashboard extends JFrame {
         bottomPanel.add(btnAlert);
         add(bottomPanel, BorderLayout.SOUTH);
 
-        // 6. Load Data Awal dari Database MySQL
         loadDataFromDB();
 
-        // 7. Event Listener Tabel (Ganti Chart pas diklik)
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 int selectedRow = table.getSelectedRow();
@@ -101,22 +94,16 @@ public class ZenithDashboard extends JFrame {
             }
         });
 
-        // 8. Start Mesin Engine Multithreading
         engine = new MarketThread(activeAssets, model, chartPanel);
         backgroundThread = new Thread(engine);
         backgroundThread.start();
 
-        // Pilih baris pertama otomatis saat buka aplikasi
         if (table.getRowCount() > 0) table.setRowSelectionInterval(0, 0);
 
-        // ==========================================
-        //         EVENT LISTENERS
-        // ==========================================
 
-        // [EVENT] Ganti Timeframe
         cbTimeframe.addActionListener(e -> {
             int index = cbTimeframe.getSelectedIndex();
-            long newTimeframeMs = 5000; 
+            long newTimeframeMs = 5000;
             switch (index) {
                 case 0: newTimeframeMs = 5000L; break;
                 case 1: newTimeframeMs = 15000L; break;
@@ -135,15 +122,14 @@ public class ZenithDashboard extends JFrame {
                     a.changeTimeframe(newTimeframeMs);
                 }
             }
-            chartPanel.resetView(); // Balikin chart ke posisi awal
+            chartPanel.resetView();
         });
 
-        // [EVENT] Draw Trendline Mode
         btnDraw.addActionListener(e -> {
             if (btnDraw.isSelected()) {
                 chartPanel.setDrawingMode(true);
                 btnDraw.setText("❌ Stop Draw");
-                btnDraw.setBackground(new Color(239, 83, 80)); // Merah
+                btnDraw.setBackground(new Color(239, 83, 80));
                 btnDraw.setForeground(Color.WHITE);
             } else {
                 chartPanel.setDrawingMode(false);
@@ -153,7 +139,6 @@ public class ZenithDashboard extends JFrame {
             }
         });
 
-        // [EVENT] Set Alert Interaktif Mode
         btnAlert.addActionListener(e -> {
             int selectedRow = table.getSelectedRow();
             if (selectedRow < 0) {
@@ -166,9 +151,8 @@ public class ZenithDashboard extends JFrame {
                 btnAlert.setText("❌ Batal Alert");
                 btnAlert.setBackground(new Color(239, 83, 80));
                 btnAlert.setForeground(Color.WHITE);
-                
+
                 chartPanel.setAlertMode(true, () -> {
-                    // Callback saat user selesai ngeklik di chart
                     btnAlert.setSelected(false);
                     btnAlert.setText("🔔 Set Alert");
                     btnAlert.setBackground(null);
@@ -182,31 +166,37 @@ public class ZenithDashboard extends JFrame {
             }
         });
 
-        // [CRUD: CREATE] Tambah Data
         btnAdd.addActionListener(e -> {
-            String symbol = JOptionPane.showInputDialog(this, "Masukkan Symbol (Contoh: GBP/USD):");
-            if (symbol == null || symbol.trim().isEmpty()) return;
-            
-            String[] options = {"Forex", "Crypto"};
-            int typeChoice = JOptionPane.showOptionDialog(this, "Pilih Tipe Aset:", "Tipe Asset",
-                    JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
-            if (typeChoice == -1) return; 
-            
-            String priceStr = JOptionPane.showInputDialog(this, "Harga Awal:");
-            if (priceStr == null || priceStr.trim().isEmpty()) return;
+            setCursor(new Cursor(Cursor.WAIT_CURSOR));
+            List<String> livePairs = BinanceFetcher.getAllUsdtPairs();
+            setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
 
-            try {
-                double price = Double.parseDouble(priceStr);
-                if (assetDAO.addAsset(symbol, options[typeChoice], price)) {
-                    JOptionPane.showMessageDialog(this, "Aset berhasil ditambahkan!");
-                    refreshSystem(); 
+            if (livePairs.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Gagal mengambil data dari Binance!\nPeriksa koneksi internet Anda.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            JComboBox<String> dropdownPairs = new JComboBox<>(livePairs.toArray(new String[0]));
+
+            JPanel panelForm = new JPanel(new GridLayout(0, 1, 5, 5));
+            panelForm.add(new JLabel("Pilih Pair Memecoin / Crypto dari Binance:"));
+            panelForm.add(dropdownPairs);
+
+            int result = JOptionPane.showConfirmDialog(this, panelForm,
+                    "Tambah Asset Real-Time", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+            if (result == JOptionPane.OK_OPTION) {
+                String selectedSymbol = (String) dropdownPairs.getSelectedItem();
+
+                if (assetDAO.addAsset(selectedSymbol, "Crypto", 0.0)) {
+                    JOptionPane.showMessageDialog(this, "Aset " + selectedSymbol + " berhasil dimasukkan ke Watchlist!");
+                    refreshSystem();
+                } else {
+                    JOptionPane.showMessageDialog(this, "Gagal! Kemungkinan pair sudah ada di database.");
                 }
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, "Error: Harga harus berupa angka!", "Error", JOptionPane.ERROR_MESSAGE);
             }
         });
 
-        // [CRUD: UPDATE] Edit Data
         btnUpdate.addActionListener(e -> {
             int selectedRow = table.getSelectedRow();
             if (selectedRow >= 0) {
@@ -217,7 +207,7 @@ public class ZenithDashboard extends JFrame {
                         double newPrice = Double.parseDouble(priceStr);
                         if (assetDAO.updateAsset(symbol, newPrice)) {
                             JOptionPane.showMessageDialog(this, "Harga berhasil di-update!");
-                            refreshSystem(); 
+                            refreshSystem();
                         }
                     } catch (NumberFormatException ex) {
                         JOptionPane.showMessageDialog(this, "Error: Harga harus angka!", "Error", JOptionPane.ERROR_MESSAGE);
@@ -228,7 +218,6 @@ public class ZenithDashboard extends JFrame {
             }
         });
 
-        // [CRUD: DELETE] Hapus Data
         btnDelete.addActionListener(e -> {
             int selectedRow = table.getSelectedRow();
             if (selectedRow >= 0) {
@@ -246,9 +235,8 @@ public class ZenithDashboard extends JFrame {
         });
     }
 
-    // Method Helper buat Load Database
     private void loadDataFromDB() {
-        model.setRowCount(0); 
+        model.setRowCount(0);
         activeAssets = assetDAO.getAllAssets();
         for (Asset asset : activeAssets) {
             String type = asset.getClass().getSimpleName();
@@ -256,26 +244,21 @@ public class ZenithDashboard extends JFrame {
         }
     }
 
-    // Method Helper buat Restart Engine saat ada perubahan DB
     private void refreshSystem() {
-        if (engine != null) engine.stopEngine(); 
-        
-        loadDataFromDB(); 
+        if (engine != null) engine.stopEngine();
+        loadDataFromDB();
         engine = new MarketThread(activeAssets, model, chartPanel);
         backgroundThread = new Thread(engine);
         backgroundThread.start();
-        
         if (table.getRowCount() > 0) table.setRowSelectionInterval(0, 0);
     }
 
     public static void main(String[] args) {
-        // Pasang tema (Look and Feel) bawaan OS biar gak kaku kayak aplikasi Java 90-an
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {
             e.printStackTrace();
         }
-
         SwingUtilities.invokeLater(() -> {
             new ZenithDashboard().setVisible(true);
         });

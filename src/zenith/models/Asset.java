@@ -2,21 +2,20 @@ package zenith.models;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.awt.Toolkit;
 import zenith.database.AssetDAO;
-import zenith.engine.TelegramNotifier; // Pastikan file TelegramNotifier udah lu buat
+import zenith.engine.BinanceFetcher;
+import zenith.engine.TelegramNotifier;
 
 public abstract class Asset {
     private String symbol;
     private double currentPrice;
     private List<Candle> chartData;
-    private List<TrendLine> drawnLines; // Nyimpen coretan garis lu
-    
+    private List<TrendLine> drawnLines;
+
     private int tickCount = 0;
-    private long currentTimeframeMs; 
-    
-    // Fitur Notifikasi & Database
+    private long currentTimeframeMs;
+
     private List<Double> activeAlerts;
     private AssetDAO daoHelper;
 
@@ -25,111 +24,83 @@ public abstract class Asset {
         this.currentPrice = startPrice;
         this.chartData = new ArrayList<>();
         this.drawnLines = new ArrayList<>();
-        
-        // Inisialisasi Database dan Load Alert dari MySQL
+
         this.daoHelper = new AssetDAO();
         this.activeAlerts = daoHelper.getActiveAlerts(symbol);
-        
-        // Setup chart awal (Default 5 Detik)
-        changeTimeframe(5000L); 
+
+        changeTimeframe(60000L);
     }
 
-    // Abstract method biar tiap pair punya volatilitas beda
     protected abstract double getVolatility();
 
-    // ----------------------------------------------------
-    // FITUR: Ganti Timeframe & Regenerasi Masa Lalu (SMC)
-    // ----------------------------------------------------
-// ----------------------------------------------------
-    // FITUR: Ganti Timeframe & Regenerasi Masa Lalu (FIXED)
-    // ----------------------------------------------------
-    public synchronized void changeTimeframe(long newTimeframeMs) {
-        this.currentTimeframeMs = newTimeframeMs;
-        this.tickCount = 0; // Reset mesin tik
-        this.chartData.clear();
-        
-        long currentTime = System.currentTimeMillis();
-        double tempPrice = this.currentPrice;
-        Random rand = new Random();
-        
-        double tfMultiplier = Math.sqrt(newTimeframeMs / 5000.0); 
-
-        // PERBAIKAN BUG: Looping sekarang turun sampai i >= 0 (Bukan 1)
-        // i = 0 artinya candle terakhir yang dibuat punya waktu "Sekarang" (Current Time)
-        for (int i = 100; i >= 0; i--) { 
-            tempPrice += (rand.nextDouble() - 0.5) * getVolatility() * tfMultiplier;
-            Candle pastCandle = new Candle(tempPrice, currentTime - (i * newTimeframeMs));
-            
-            pastCandle.updatePrice(tempPrice + (rand.nextDouble() * getVolatility() * tfMultiplier)); // High
-            pastCandle.updatePrice(tempPrice - (rand.nextDouble() * getVolatility() * tfMultiplier)); // Low
-            pastCandle.updatePrice(tempPrice + (rand.nextDouble() - 0.5) * getVolatility() * tfMultiplier); // Close
-            
-            this.chartData.add(pastCandle);
-        }
-        this.currentPrice = chartData.get(chartData.size() - 1).getClose();
+    private String getBinanceInterval(long ms) {
+        if (ms <= 60000L) return "1m";
+        if (ms == 300000L) return "5m";
+        if (ms == 900000L) return "15m";
+        if (ms == 3600000L) return "1h";
+        if (ms == 14400000L) return "4h";
+        if (ms == 86400000L) return "1d";
+        if (ms == 604800000L) return "1w";
+        return "1M";
     }
 
-    // ----------------------------------------------------
-    // FITUR: Mesin Pergerakan Harga & Pemicu Telegram
-    // ----------------------------------------------------
-    public synchronized void simulateTick() {
-        Random rand = new Random();
-        
-        // Volatilitas real-time dibuat halus
-        double change = (rand.nextDouble() - 0.5) * (getVolatility() * 0.2);
-        this.currentPrice += change;
+    public synchronized void changeTimeframe(long newTimeframeMs) {
+        this.currentTimeframeMs = newTimeframeMs;
+        this.tickCount = 0;
 
-        if (chartData.isEmpty()) {
-            chartData.add(new Candle(this.currentPrice, System.currentTimeMillis()));
+        String interval = getBinanceInterval(newTimeframeMs);
+        List<Candle> realData = BinanceFetcher.getRealCandles(symbol, interval);
+
+        if (realData != null && !realData.isEmpty()) {
+            this.chartData = realData;
+            this.currentPrice = chartData.get(chartData.size() - 1).getClose();
         }
+    }
 
-        Candle currentCandle = chartData.get(chartData.size() - 1);
-        currentCandle.updatePrice(this.currentPrice);
+    public synchronized void simulateTick() {
+        double livePrice = BinanceFetcher.getCurrentPrice(symbol);
+        if (livePrice <= 0) return;
 
-        // --- Cek Alarm SMC ---
+        this.currentPrice = livePrice;
+
         List<Double> hitAlerts = new ArrayList<>();
         for (Double alertPrice : activeAlerts) {
-            // Kalau area Liquidity/OB kesapu
-            if (Math.abs(this.currentPrice - alertPrice) < (getVolatility() * 1.5)) {
-                Toolkit.getDefaultToolkit().beep(); // Bunyi di laptop
-                
-                String msg = "🚨 ZENITH SYSTEM ALERT 🚨\n\n" +
+            double toleransi = alertPrice * 0.0005;
+            if (Math.abs(this.currentPrice - alertPrice) <= toleransi) {
+                Toolkit.getDefaultToolkit().beep();
+
+                String msg = "🚨 ZENITH LIVE ALERT 🚨\n\n" +
                              "Pair: " + symbol + "\n" +
-                             "Status: POI Reached / Liquidity Sweep Area Hit!\n" +
-                             "Price: " + String.format("%.2f", alertPrice);
-                TelegramNotifier.sendAlertAsync(msg); // Tembak ke HP via Bot
-                
-                hitAlerts.add(alertPrice); // Tandai alert yang udah kena
-                daoHelper.deactivateAlert(symbol, alertPrice); // Matikan di DB
+                             "Status: POI Reached!\n" +
+                             "Live Price: " + String.format("%.4f", currentPrice);
+                TelegramNotifier.sendAlertAsync(msg);
+
+                hitAlerts.add(alertPrice);
+                daoHelper.deactivateAlert(symbol, alertPrice);
             }
         }
-        activeAlerts.removeAll(hitAlerts); // Bersihin dari layar
+        activeAlerts.removeAll(hitAlerts);
 
-        // --- Logic Ganti Candle ---
+        if (!chartData.isEmpty()) {
+            Candle currentCandle = chartData.get(chartData.size() - 1);
+            currentCandle.updatePrice(this.currentPrice);
+        }
+
         tickCount++;
-        long targetTicks = currentTimeframeMs / 200; // Asumsi 1 tick engine = 200ms
-        if (tickCount >= targetTicks) {
-            chartData.add(new Candle(this.currentPrice, System.currentTimeMillis()));
-            if (chartData.size() > 500) chartData.remove(0); 
+        if (tickCount >= 10) {
+            changeTimeframe(currentTimeframeMs);
             tickCount = 0;
         }
     }
-    
-    // FITUR BARU: Hapus Alert
-    public synchronized void removeAlert(double targetPrice) {
-        this.activeAlerts.remove(targetPrice);
-        daoHelper.deleteAlert(symbol, targetPrice); // Hapus permanen dari MySQL
-    }
 
-    // ----------------------------------------------------
-    // GETTERS & SETTERS
-    // ----------------------------------------------------
     public synchronized void addAlert(double targetPrice) {
         this.activeAlerts.add(targetPrice);
-        daoHelper.saveAlert(symbol, targetPrice); 
+        daoHelper.saveAlert(symbol, targetPrice);
     }
-
-    // Bikin copy list biar nggak crash pas GUI & Engine baca/nulis bersamaan
+    public synchronized void removeAlert(double targetPrice) {
+        this.activeAlerts.remove(targetPrice);
+        daoHelper.deleteAlert(symbol, targetPrice);
+    }
     public synchronized List<Double> getActiveAlerts() { return new ArrayList<>(activeAlerts); }
     public synchronized double getCurrentPrice() { return currentPrice; }
     public String getSymbol() { return symbol; }

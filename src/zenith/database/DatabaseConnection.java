@@ -11,11 +11,10 @@ public class DatabaseConnection {
             try {
                 String url = "jdbc:mysql://localhost:3306/db_zenith";
                 String user = "root";
-                String pass = ""; // Sesuaikan jika xampp kamu pakai password
+                String pass = "";
 
-                // --- TAMBAHKAN BARIS INI UNTUK MEMAKSA LOAD DRIVER ---
                 Class.forName("com.mysql.cj.jdbc.Driver");
-                
+
                 conn = DriverManager.getConnection(url, user, pass);
                 System.out.println("[DB] Terhubung ke MySQL!");
             } catch (Exception e) {

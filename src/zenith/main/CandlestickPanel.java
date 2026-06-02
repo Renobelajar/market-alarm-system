@@ -133,6 +133,10 @@ public class CandlestickPanel extends JPanel {
         this.asset = asset;
         resetView();
     }
+    
+    public Asset getAsset() {
+        return this.asset;
+    }
 
     public void resetView() {
         this.offsetX = 0; this.offsetY = 0; this.zoomLevel = 8;

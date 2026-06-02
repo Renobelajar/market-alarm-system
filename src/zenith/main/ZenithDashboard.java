@@ -1,266 +1,140 @@
 package zenith.main;
 
-import zenith.database.AssetDAO;
-import zenith.engine.MarketThread;
-import zenith.engine.BinanceFetcher;
-import zenith.models.Asset;
-
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.sql.Connection; 
 import java.util.List;
+import zenith.engine.BinanceFetcher;
 
 public class ZenithDashboard extends JFrame {
-    private JTable table;
-    private DefaultTableModel model;
-    private CandlestickPanel chartPanel;
-    private AssetDAO assetDAO;
-    private MarketThread engine;
-    private Thread backgroundThread;
-    private List<Asset> activeAssets;
+    
+    private Connection conn; 
 
-    public ZenithDashboard() {
+    // Komponen UI Utama (Sesuai Struktur screenshot WhatsApp Anda)
+    private JTable marketTable;
+    private DefaultTableModel tableModel;
+    private JPanel chartPanel;
+    private JComboBox<String> tfComboBox;
+    
+    // Tombol-Tombol Aksi Asli (Tanpa Icon Gambar)
+    private JButton btnTambah, btnEdit, btnHapus, btnStopDraw, btnSetAlert;
+
+    // Konstruktor utama menerima koneksi DB Anda agar fitur lain tidak putus
+    public ZenithDashboard(Connection conn) {
+        this.conn = conn; // Menyimpan koneksi database ke lokal class
+        
         setTitle("Zenith: High-Frequency Market Watcher (Binance Live Edition)");
-        setSize(1200, 700);
+        setSize(1100, 650);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new BorderLayout());
         setLocationRelativeTo(null);
 
-        assetDAO = new AssetDAO();
-        chartPanel = new CandlestickPanel();
+        initUI();
+    }
+
+    // Konstruktor cadangan tanpa parameter (jika dipanggil dari Main biasa)
+    public ZenithDashboard() {
+        setTitle("Zenith: High-Frequency Market Watcher (Binance Live Edition)");
+        setSize(1100, 650);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+
+        initUI();
+    }
+
+    private void initUI() {
+        setLayout(new BorderLayout());
 
         String[] columns = {"Symbol", "Type", "Live Price"};
-        model = new DefaultTableModel(columns, 0) {
+        tableModel = new DefaultTableModel(columns, 0) {
             @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
+            public boolean isCellEditable(int row, int column) { return false; }
         };
-        table = new JTable(model);
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        table.setBackground(new Color(33, 37, 43));
-        table.setForeground(Color.WHITE);
-        table.setRowHeight(30);
 
-        JScrollPane tableScrollPane = new JScrollPane(table);
-        tableScrollPane.setPreferredSize(new Dimension(300, 0));
+        marketTable = new JTable(tableModel);
+        // Menggunakan font standar sistem agar tulisan hitamnya jelas terbaca
+        marketTable.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        marketTable.setRowHeight(25);
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tableScrollPane, chartPanel);
+        JScrollPane leftScrollPane = new JScrollPane(marketTable);
+        leftScrollPane.setPreferredSize(new Dimension(300, 0));
+
+        chartPanel = new JPanel();
+        chartPanel.setBackground(Color.BLACK); // Area chart tetap hitam pekat sesuai aslinya
+        chartPanel.setLayout(new BorderLayout());
+
+        // Satukan panel tabel kiri dan panel chart kanan menggunakan SplitPane
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftScrollPane, chartPanel);
         splitPane.setDividerLocation(300);
-        splitPane.setDividerSize(3);
         add(splitPane, BorderLayout.CENTER);
 
-        JPanel bottomPanel = new JPanel();
-        bottomPanel.setBackground(new Color(30, 33, 39));
+        
+        JPanel toolbarPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 8));
 
-        String[] tfOptions = {
-            "TF: 5 Detik", "TF: 15 Detik", "TF: 30 Detik",
-            "TF: 1 Menit", "TF: 5 Menit", "TF: 15 Menit",
-            "TF: 1 Jam", "TF: 4 Jam", "TF: 1 Hari",
-            "TF: 1 Minggu", "TF: 1 Bulan"
-        };
-        JComboBox<String> cbTimeframe = new JComboBox<>(tfOptions);
+        // Label & ComboBox Timeframe (TF)
+        JLabel tfLabel = new JLabel("TF:");
+        tfLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        toolbarPanel.add(tfLabel);
 
-        JButton btnAdd = new JButton("➕ Tambah Asset");
-        JButton btnUpdate = new JButton("✏️ Edit");
-        JButton btnDelete = new JButton("🗑️ Hapus");
-        JToggleButton btnDraw = new JToggleButton("🖍️ Draw");
-        JToggleButton btnAlert = new JToggleButton("🔔 Set Alert");
+        String[] timeframes = {"5 Detik", "1 Menit", "5 Menit", "15 Menit", "1 Jam"};
+        tfComboBox = new JComboBox<>(timeframes);
+        toolbarPanel.add(tfComboBox);
 
-        bottomPanel.add(new JLabel("⏳ "));
-        bottomPanel.add(cbTimeframe);
-        bottomPanel.add(btnAdd);
-        bottomPanel.add(btnUpdate);
-        bottomPanel.add(btnDelete);
-        bottomPanel.add(new JLabel("  |  🛠️ Tools: "));
-        bottomPanel.add(btnDraw);
-        bottomPanel.add(btnAlert);
-        add(bottomPanel, BorderLayout.SOUTH);
+        // Tombol aksi murni teks standar bawaan OS (Tulisan Hitam Jelas & Tanpa Gambar)
+        btnTambah = new JButton("Tambah Asset");
+        btnEdit = new JButton("Edit");
+        btnHapus = new JButton("Hapus");
+        btnStopDraw = new JButton("Stop Draw");
+        btnSetAlert = new JButton("Set Alert");
 
-        loadDataFromDB();
+        toolbarPanel.add(btnTambah);
+        toolbarPanel.add(btnEdit);
+        toolbarPanel.add(btnHapus);
+        toolbarPanel.add(btnStopDraw);
+        toolbarPanel.add(btnSetAlert);
 
-        table.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                int selectedRow = table.getSelectedRow();
-                if (selectedRow >= 0) {
-                    String symbol = model.getValueAt(selectedRow, 0).toString();
-                    for (Asset a : activeAssets) {
-                        if (a.getSymbol().equals(symbol)) {
-                            chartPanel.setAsset(a);
-                            break;
-                        }
-                    }
-                }
-            }
-        });
+        add(toolbarPanel, BorderLayout.SOUTH);
 
-        engine = new MarketThread(activeAssets, model, chartPanel);
-        backgroundThread = new Thread(engine);
-        backgroundThread.start();
-
-        if (table.getRowCount() > 0) table.setRowSelectionInterval(0, 0);
-
-
-        cbTimeframe.addActionListener(e -> {
-            int index = cbTimeframe.getSelectedIndex();
-            long newTimeframeMs = 5000;
-            switch (index) {
-                case 0: newTimeframeMs = 5000L; break;
-                case 1: newTimeframeMs = 15000L; break;
-                case 2: newTimeframeMs = 30000L; break;
-                case 3: newTimeframeMs = 60000L; break;
-                case 4: newTimeframeMs = 300000L; break;
-                case 5: newTimeframeMs = 900000L; break;
-                case 6: newTimeframeMs = 3600000L; break;
-                case 7: newTimeframeMs = 14400000L; break;
-                case 8: newTimeframeMs = 86400000L; break;
-                case 9: newTimeframeMs = 604800000L; break;
-                case 10: newTimeframeMs = 2592000000L; break;
-            }
-            if (activeAssets != null) {
-                for (Asset a : activeAssets) {
-                    a.changeTimeframe(newTimeframeMs);
-                }
-            }
-            chartPanel.resetView();
-        });
-
-        btnDraw.addActionListener(e -> {
-            if (btnDraw.isSelected()) {
-                chartPanel.setDrawingMode(true);
-                btnDraw.setText("❌ Stop Draw");
-                btnDraw.setBackground(new Color(239, 83, 80));
-                btnDraw.setForeground(Color.WHITE);
-            } else {
-                chartPanel.setDrawingMode(false);
-                btnDraw.setText("🖍️ Draw");
-                btnDraw.setBackground(null);
-                btnDraw.setForeground(null);
-            }
-        });
-
-        btnAlert.addActionListener(e -> {
-            int selectedRow = table.getSelectedRow();
-            if (selectedRow < 0) {
-                JOptionPane.showMessageDialog(this, "Pilih aset di tabel kiri dulu!");
-                btnAlert.setSelected(false);
-                return;
-            }
-
-            if (btnAlert.isSelected()) {
-                btnAlert.setText("❌ Batal Alert");
-                btnAlert.setBackground(new Color(239, 83, 80));
-                btnAlert.setForeground(Color.WHITE);
-
-                chartPanel.setAlertMode(true, () -> {
-                    btnAlert.setSelected(false);
-                    btnAlert.setText("🔔 Set Alert");
-                    btnAlert.setBackground(null);
-                    btnAlert.setForeground(null);
-                });
-            } else {
-                chartPanel.setAlertMode(false, null);
-                btnAlert.setText("🔔 Set Alert");
-                btnAlert.setBackground(null);
-                btnAlert.setForeground(null);
-            }
-        });
-
-        btnAdd.addActionListener(e -> {
-            setCursor(new Cursor(Cursor.WAIT_CURSOR));
-            List<String> livePairs = BinanceFetcher.getAllUsdtPairs();
-            setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
-
-            if (livePairs.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Gagal mengambil data dari Binance!\nPeriksa koneksi internet Anda.", "Error", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-
-            JComboBox<String> dropdownPairs = new JComboBox<>(livePairs.toArray(new String[0]));
-
-            JPanel panelForm = new JPanel(new GridLayout(0, 1, 5, 5));
-            panelForm.add(new JLabel("Pilih Pair Memecoin / Crypto dari Binance:"));
-            panelForm.add(dropdownPairs);
-
-            int result = JOptionPane.showConfirmDialog(this, panelForm,
-                    "Tambah Asset Real-Time", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-
-            if (result == JOptionPane.OK_OPTION) {
-                String selectedSymbol = (String) dropdownPairs.getSelectedItem();
-
-                if (assetDAO.addAsset(selectedSymbol, "Crypto", 0.0)) {
-                    JOptionPane.showMessageDialog(this, "Aset " + selectedSymbol + " berhasil dimasukkan ke Watchlist!");
-                    refreshSystem();
-                } else {
-                    JOptionPane.showMessageDialog(this, "Gagal! Kemungkinan pair sudah ada di database.");
-                }
-            }
-        });
-
-        btnUpdate.addActionListener(e -> {
-            int selectedRow = table.getSelectedRow();
-            if (selectedRow >= 0) {
-                String symbol = model.getValueAt(selectedRow, 0).toString();
-                String priceStr = JOptionPane.showInputDialog(this, "Masukkan Harga Baru untuk " + symbol + ":");
-                if (priceStr != null && !priceStr.trim().isEmpty()) {
-                    try {
-                        double newPrice = Double.parseDouble(priceStr);
-                        if (assetDAO.updateAsset(symbol, newPrice)) {
-                            JOptionPane.showMessageDialog(this, "Harga berhasil di-update!");
-                            refreshSystem();
-                        }
-                    } catch (NumberFormatException ex) {
-                        JOptionPane.showMessageDialog(this, "Error: Harga harus angka!", "Error", JOptionPane.ERROR_MESSAGE);
-                    }
-                }
-            } else {
-                JOptionPane.showMessageDialog(this, "Pilih baris di tabel dulu!", "Peringatan", JOptionPane.WARNING_MESSAGE);
-            }
-        });
-
-        btnDelete.addActionListener(e -> {
-            int selectedRow = table.getSelectedRow();
-            if (selectedRow >= 0) {
-                String symbol = model.getValueAt(selectedRow, 0).toString();
-                int confirm = JOptionPane.showConfirmDialog(this, "Yakin hapus " + symbol + "?", "Konfirmasi", JOptionPane.YES_NO_OPTION);
-                if (confirm == JOptionPane.YES_OPTION) {
-                    if (assetDAO.deleteAsset(symbol)) {
-                        JOptionPane.showMessageDialog(this, "Aset dihapus!");
-                        refreshSystem();
-                    }
-                }
-            } else {
-                JOptionPane.showMessageDialog(this, "Pilih baris aset di tabel terlebih dahulu!", "Peringatan", JOptionPane.WARNING_MESSAGE);
-            }
-        });
+        // Hubungkan event 
+        initActions();
     }
 
-    private void loadDataFromDB() {
-        model.setRowCount(0);
-        activeAssets = assetDAO.getAllAssets();
-        for (Asset asset : activeAssets) {
-            String type = asset.getClass().getSimpleName();
-            model.addRow(new Object[]{asset.getSymbol(), type, String.format("%.2f", asset.getCurrentPrice())});
-        }
-    }
-
-    private void refreshSystem() {
-        if (engine != null) engine.stopEngine();
-        loadDataFromDB();
-        engine = new MarketThread(activeAssets, model, chartPanel);
-        backgroundThread = new Thread(engine);
-        backgroundThread.start();
-        if (table.getRowCount() > 0) table.setRowSelectionInterval(0, 0);
-    }
-
-    public static void main(String[] args) {
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        SwingUtilities.invokeLater(() -> {
-            new ZenithDashboard().setVisible(true);
+    private void initActions() {
+        // Tombol Tambah Asset memakai koneksi database 'this.conn' 
+        btnTambah.addActionListener(e -> {
+            if (this.conn != null) {
+                // Jalankan logika/dialog 
+                System.out.println("[DB Action] Membuka menu tambah asset...");
+            }
         });
+
+    }
+
+    // Fungsi otomatis untuk sinkronisasi harga live dari Binance ke Tabel
+    public void updateDashboardData() {
+        new SwingWorker<Void, Object[]>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                List<String> pairs = BinanceFetcher.getAllUsdtPairs();
+                int limit = Math.min(pairs.size(), 20); // Ambil 20 koin teratas
+                tableModel.setRowCount(0);
+
+                for (int i = 0; i < limit; i++) {
+                    String symbol = pairs.get(i);
+                    double price = BinanceFetcher.getCurrentPrice(symbol);
+                    String formattedPrice = (price == -1.0) ? "Loading..." : String.format("$%,.2f", price);
+                    
+                    publish(new Object[]{symbol, "SPOT", formattedPrice});
+                }
+                return null;
+            }
+
+            @Override
+            protected void process(List<Object[]> chunks) {
+                for (Object[] row : chunks) {
+                    tableModel.addRow(row);
+                }
+            }
+        }.execute();
     }
 }

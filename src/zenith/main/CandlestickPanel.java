@@ -2,6 +2,7 @@ package zenith.main;
 
 import zenith.models.Asset;
 import zenith.models.Candle;
+import zenith.models.TrendLine;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -12,214 +13,320 @@ import java.util.List;
 public class CandlestickPanel extends JPanel {
     private Asset asset;
     
-    // Konfigurasi Navigasi Chart
-    private int zoomLevel = 8; // Lebar candle
-    private int offsetX = 0; // Geser Kanan/Kiri
-    private int offsetY = 0; // Geser Atas/Bawah
+    private int zoomLevel = 8; 
+    private int offsetX = 0; 
+    private int offsetY = 0; 
     private int lastMouseX, lastMouseY;
     
-    // Margin untuk Sumbu Harga dan Waktu
     private final int RIGHT_MARGIN = 70;
     private final int BOTTOM_MARGIN = 30;
 
+    // Mode Menggambar & Alert
+    private boolean isDrawingMode = false;
+    private TrendLine tempLine = null;
+    
+    private boolean isAlertMode = false;
+    private double hoverPrice = 0.0;
+    private Runnable onAlertSetCallback; // Untuk mematikan tombol di Dashboard setelah klik
+
+    private double currentMinPrice = 0;
+    private double currentMaxPrice = 0;
+
     public CandlestickPanel() {
-        setBackground(new Color(18, 20, 24)); // Warna khas TradingView/MT4 Dark
+        setBackground(new Color(18, 20, 24)); 
         
-        // Fitur Zoom In/Out pake Scroll Mouse
         addMouseWheelListener(e -> {
-            if (e.getWheelRotation() < 0) {
-                zoomLevel += 2; // Scroll up = Zoom In
-            } else {
-                zoomLevel -= 2; // Scroll down = Zoom Out
-            }
-            if (zoomLevel < 2) zoomLevel = 2; // Batas mentok kecil
-            if (zoomLevel > 50) zoomLevel = 50; // Batas mentok gede
+            if (e.getWheelRotation() < 0) zoomLevel += 2;
+            else zoomLevel -= 2;
+            if (zoomLevel < 2) zoomLevel = 2; 
+            if (zoomLevel > 50) zoomLevel = 50; 
             repaint();
         });
 
-        // Fitur Geser (Pan/Drag) pake klik & tahan
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-                lastMouseX = e.getX();
-                lastMouseY = e.getY();
+                if (asset == null) return;
+                
+                // 1. Jika sedang Mode Pasang Alert
+                if (isAlertMode) {
+                    double targetPrice = getPriceFromY(e.getY());
+                    asset.addAlert(targetPrice); // Simpan ke DB & Memori
+                    isAlertMode = false; // Matikan mode alert
+                    setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
+                    if (onAlertSetCallback != null) onAlertSetCallback.run(); // Matikan toggle button
+                    repaint();
+                    JOptionPane.showMessageDialog(CandlestickPanel.this, "✅ Alert dipasang di harga:\n" + String.format("%.2f", targetPrice));
+                    return;
+                }
+
+                // 2. Cek apakah user meng-klik garis Alert yang sudah ada
+                for (Double alertPrice : asset.getActiveAlerts()) {
+                    int alertY = getYFromPrice(alertPrice);
+                    // Toleransi klik meleset 5 pixel ke atas/bawah
+                    if (Math.abs(e.getY() - alertY) <= 5) { 
+                        showAlertMenu(e, alertPrice);
+                        return;
+                    }
+                }
+
+                // 3. Mode Menggambar Trendline
+                if (isDrawingMode) {
+                    long ts = getTimestampFromX(e.getX());
+                    double price = getPriceFromY(e.getY());
+                    tempLine = new TrendLine(ts, price, ts, price);
+                } else {
+                    lastMouseX = e.getX();
+                    lastMouseY = e.getY();
+                }
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (isDrawingMode && tempLine != null) {
+                    asset.getDrawnLines().add(tempLine);
+                    tempLine = null;
+                    repaint();
+                }
             }
         });
 
-        addMouseMotionListener(new MouseAdapter() {
+        addMouseMotionListener(new MouseMotionAdapter() {
+            // FITUR BARU: Deteksi mouse jalan tanpa di-klik (Buat bayangan garis Alert)
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                if (isAlertMode) {
+                    hoverPrice = getPriceFromY(e.getY());
+                    repaint(); // Update layar biar garisnya ngikutin mouse
+                }
+            }
+
             @Override
             public void mouseDragged(MouseEvent e) {
-                int dx = e.getX() - lastMouseX;
-                int dy = e.getY() - lastMouseY;
-                offsetX += dx;
-                offsetY += dy;
-                lastMouseX = e.getX();
-                lastMouseY = e.getY();
-                repaint();
+                if (isDrawingMode && tempLine != null) {
+                    tempLine.endTimestamp = getTimestampFromX(e.getX());
+                    tempLine.endPrice = getPriceFromY(e.getY());
+                    repaint();
+                } else if (!isDrawingMode && !isAlertMode) {
+                    offsetX += (e.getX() - lastMouseX);
+                    offsetY += (e.getY() - lastMouseY);
+                    lastMouseX = e.getX();
+                    lastMouseY = e.getY();
+                    repaint();
+                }
             }
         });
+    }
+
+    // Fungsi Pop-up Menu untuk Hapus Garis Alert
+    private void showAlertMenu(MouseEvent e, double alertPrice) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem delItem = new JMenuItem("🗑️ Hapus Alert di Harga: " + String.format("%.2f", alertPrice));
+        JMenuItem closeItem = new JMenuItem("❌ Batal / Tutup");
+
+        delItem.addActionListener(ev -> {
+            asset.removeAlert(alertPrice);
+            repaint();
+        });
+
+        menu.add(delItem);
+        menu.addSeparator();
+        menu.add(closeItem);
+        
+        // Tampilkan menu di posisi kursor
+        menu.show(this, e.getX(), e.getY()); 
     }
 
     public void setAsset(Asset asset) {
         this.asset = asset;
-        // Reset posisi view setiap ganti pair/aset
-        this.offsetX = 0;
-        this.offsetY = 0;
-    }
-    
-    public void resetView() {
-        this.offsetX = 0;
-        this.offsetY = 0;
-        this.zoomLevel = 8; // Balikin ukuran candle ke normal
-        repaint(); // Paksa gambar ulang
+        resetView();
     }
 
+    public void resetView() {
+        this.offsetX = 0; this.offsetY = 0; this.zoomLevel = 8;
+        repaint(); 
+    }
+
+    public void setDrawingMode(boolean isDrawing) {
+        this.isDrawingMode = isDrawing;
+        if (isDrawing) setCursor(new Cursor(Cursor.CROSSHAIR_CURSOR));
+        else setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
+    }
+
+    // Fungsi Mode Pasang Alert Interaktif
+    public void setAlertMode(boolean mode, Runnable onSetCallback) {
+        this.isAlertMode = mode;
+        this.onAlertSetCallback = onSetCallback;
+        if (mode) setCursor(new Cursor(Cursor.HAND_CURSOR));
+        else setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
+        repaint();
+    }
+
+    // --- HELPER MATH ---
+    private double getPriceFromY(int y) {
+        int chartHeight = getHeight() - BOTTOM_MARGIN;
+        double priceRange = currentMaxPrice - currentMinPrice;
+        if (priceRange == 0) priceRange = 1;
+        return currentMaxPrice - (((y - offsetY) / (double) chartHeight) * priceRange);
+    }
+    private long getTimestampFromX(int x) {
+        if (asset == null || asset.getChartData().isEmpty()) return 0;
+        int chartWidth = getWidth() - RIGHT_MARGIN;
+        int spacing = zoomLevel + 2;
+        double candlesFromRight = (double)(chartWidth - spacing + offsetX - x) / spacing;
+        long latestTime = asset.getChartData().get(asset.getChartData().size() - 1).getTimestamp();
+        return latestTime - (long)(candlesFromRight * asset.getCurrentTimeframeMs());
+    }
+    private int getYFromPrice(double price) {
+        int chartHeight = getHeight() - BOTTOM_MARGIN;
+        double priceRange = currentMaxPrice - currentMinPrice;
+        if (priceRange == 0) priceRange = 1;
+        return chartHeight - (int) (((price - currentMinPrice) / priceRange) * chartHeight) + offsetY;
+    }
+    private int getXFromTimestamp(long timestamp) {
+        if (asset == null || asset.getChartData().isEmpty()) return 0;
+        int chartWidth = getWidth() - RIGHT_MARGIN;
+        int spacing = zoomLevel + 2;
+        long latestTime = asset.getChartData().get(asset.getChartData().size() - 1).getTimestamp();
+        double candlesFromRight = (double)(latestTime - timestamp) / asset.getCurrentTimeframeMs();
+        return chartWidth - spacing + offsetX - (int)(candlesFromRight * spacing);
+    }
+
+    // --- MESIN PELUKIS TAMPILAN (paintComponent) ---
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         if (asset == null || asset.getChartData().isEmpty()) return;
 
         Graphics2D g2 = (Graphics2D) g;
-        // Bikin garis chart lebih mulus (Anti-aliasing)
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
         List<Candle> candles = asset.getChartData();
-        int width = getWidth();
-        int height = getHeight();
-        
-        // Area menggambar chart (dikurangi margin agar tidak nabrak teks)
-        int chartWidth = width - RIGHT_MARGIN;
-        int chartHeight = height - BOTTOM_MARGIN;
+        int width = getWidth(), height = getHeight();
+        int chartWidth = width - RIGHT_MARGIN, chartHeight = height - BOTTOM_MARGIN;
 
-        // 1. CARI HARGA MIN & MAX (Untuk skala Y)
-        double minPrice = Double.MAX_VALUE;
-        double maxPrice = Double.MIN_VALUE;
+        currentMinPrice = Double.MAX_VALUE;
+        currentMaxPrice = Double.MIN_VALUE;
         for (Candle c : candles) {
-            if (c.getLow() < minPrice) minPrice = c.getLow();
-            if (c.getHigh() > maxPrice) maxPrice = c.getHigh();
+            if (c.getLow() < currentMinPrice) currentMinPrice = c.getLow();
+            if (c.getHigh() > currentMaxPrice) currentMaxPrice = c.getHigh();
         }
-        double priceRange = maxPrice - minPrice;
+        double priceRange = currentMaxPrice - currentMinPrice;
         if (priceRange == 0) priceRange = 1;
 
-        // 2. GAMBAR BACKGROUND GRID (Kotak-kotak tabel)
-        g2.setColor(new Color(40, 44, 52)); // Warna Grid
-        // Grid Horizontal
-        for (int i = 0; i < chartHeight; i += 40) {
-            g2.drawLine(0, i, chartWidth, i);
-        }
-        // Grid Vertical
-        for (int i = chartWidth; i > 0; i -= 60) {
-            g2.drawLine(i, 0, i, chartHeight);
-        }
+        g2.setColor(new Color(40, 44, 52)); 
+        for (int i = 0; i < chartHeight; i += 40) g2.drawLine(0, i, chartWidth, i);
+        for (int i = chartWidth; i > 0; i -= 60) g2.drawLine(i, 0, i, chartHeight);
 
-        // 3. BATASI AREA GAMBAR (Kliping) AGAR CANDLE TIDAK KELUAR BATAS
         Shape originalClip = g2.getClip();
         g2.clipRect(0, 0, chartWidth, chartHeight);
 
-        // 4. MENGGAMBAR CANDLESTICK
         int spacing = zoomLevel + 2;
-        // Posisi X candle paling baru (paling kanan)
         int xPos = chartWidth - spacing + offsetX; 
-
         for (int i = candles.size() - 1; i >= 0; i--) {
             Candle c = candles.get(i);
-            
-            // Skip gambar jika candle sudah di luar layar kiri/kanan (Optimasi Memori)
-            if (xPos + zoomLevel < 0 || xPos > chartWidth) {
-                xPos -= spacing;
-                continue; 
-            }
+            if (xPos + zoomLevel < 0 || xPos > chartWidth) { xPos -= spacing; continue; }
 
-            // Rumus posisi Y (ditambah offsetY dari hasil geser mouse)
-            int yHigh = chartHeight - (int) (((c.getHigh() - minPrice) / priceRange) * chartHeight) + offsetY;
-            int yLow = chartHeight - (int) (((c.getLow() - minPrice) / priceRange) * chartHeight) + offsetY;
-            int yOpen = chartHeight - (int) (((c.getOpen() - minPrice) / priceRange) * chartHeight) + offsetY;
-            int yClose = chartHeight - (int) (((c.getClose() - minPrice) / priceRange) * chartHeight) + offsetY;
+            int yHigh = getYFromPrice(c.getHigh());
+            int yLow = getYFromPrice(c.getLow());
+            int yOpen = getYFromPrice(c.getOpen());
+            int yClose = getYFromPrice(c.getClose());
 
-            if (c.isBullish()) {
-                g2.setColor(new Color(38, 166, 154)); // Hijau
-            } else {
-                g2.setColor(new Color(239, 83, 80)); // Merah
-            }
+            if (c.isBullish()) g2.setColor(new Color(38, 166, 154)); 
+            else g2.setColor(new Color(239, 83, 80)); 
 
-            // Gambar Sumbu (Wick)
             g2.drawLine(xPos + zoomLevel / 2, yHigh, xPos + zoomLevel / 2, yLow);
-
-            // Gambar Body Candle
             int bodyY = Math.min(yOpen, yClose);
-            int bodyHeight = Math.abs(yOpen - yClose);
-            if (bodyHeight == 0) bodyHeight = 1;
-            // ... (kode gambar body candle tetep sama)
+            int bodyHeight = Math.max(1, Math.abs(yOpen - yClose));
             g2.fillRect(xPos, bodyY, zoomLevel, bodyHeight);
 
-            // --- UPDATE: Label Waktu Pintar Menyesuaikan Timeframe ---
-            if (i % 5 == 0) { // Cetak label setiap 5 candle biar nggak numpuk
-                g2.setColor(Color.GRAY);
-                g2.setFont(new Font("Arial", Font.PLAIN, 10));
-                
-                String timeFormatPattern;
-                long tfMs = asset.getCurrentTimeframeMs();
-                
-                // Logic Format Waktu: 
-                // Kalau TF Harian/Mingguan/Bulanan -> Tampilkan Tanggal & Bulan
-                // Kalau TF Jam/Menit -> Tampilkan Jam & Menit
-                // Kalau TF Detik -> Tampilkan lengkap pakai Detik
-                if (tfMs >= 86400000L) { // >= 1 Hari
-                    timeFormatPattern = "dd MMM yyyy";
-                } else if (tfMs >= 3600000L) { // >= 1 Jam
-                    timeFormatPattern = "dd MMM HH:mm";
-                } else {
-                    timeFormatPattern = "HH:mm:ss";
-                }
-                
-                String timeStr = new SimpleDateFormat(timeFormatPattern).format(new Date(c.getTimestamp()));
-                
+            if (i % 5 == 0) {
+                g2.setColor(Color.GRAY); g2.setFont(new Font("Arial", Font.PLAIN, 10));
+                String pattern = asset.getCurrentTimeframeMs() >= 86400000L ? "dd MMM" : "HH:mm:ss";
+                String timeStr = new SimpleDateFormat(pattern).format(new Date(c.getTimestamp()));
                 g2.setClip(originalClip); 
-                g2.drawString(timeStr, xPos - 20, height - 10); // Posisi text waktu di bawah
-                g2.setClip(0, 0, chartWidth, chartHeight); 
+                g2.drawString(timeStr, xPos - 20, height - 10);
+                g2.clipRect(0, 0, chartWidth, chartHeight); 
             }
-
             xPos -= spacing;
         }
-        // ... (lanjut ke Langkah 5 sidebar kanan)
 
-        // Matikan kliping agar bisa menggambar Panel Kanan (Harga)
-        g2.setClip(originalClip);
-
-        // 5. MENGGAMBAR SIDEBAR KANAN (Harga Y-Axis)
-        g2.setColor(new Color(25, 27, 33)); // Background border kanan
-        g2.fillRect(chartWidth, 0, RIGHT_MARGIN, height);
-        g2.setColor(new Color(40, 44, 52)); // Garis pembatas
-        g2.drawLine(chartWidth, 0, chartWidth, height);
-
-        g2.setColor(Color.LIGHT_GRAY);
-        g2.setFont(new Font("Arial", Font.BOLD, 11));
-        
-        // Cetak skala harga di panel kanan
-        for (int i = 20; i < chartHeight; i += 40) {
-            // Hitung balik harga berdasarkan posisi Y pixel (termasuk offset)
-            double priceAtY = maxPrice - (((i - offsetY) / (double)chartHeight) * priceRange);
-            g2.drawString(String.format("%.2f", priceAtY), chartWidth + 5, i);
+        g2.setColor(new Color(33, 150, 243)); 
+        g2.setStroke(new BasicStroke(2)); 
+        for (TrendLine line : asset.getDrawnLines()) {
+            g2.drawLine(getXFromTimestamp(line.startTimestamp), getYFromPrice(line.startPrice),
+                        getXFromTimestamp(line.endTimestamp), getYFromPrice(line.endPrice));
+        }
+        if (tempLine != null) { 
+            g2.drawLine(getXFromTimestamp(tempLine.startTimestamp), getYFromPrice(tempLine.startPrice),
+                        getXFromTimestamp(tempLine.endTimestamp), getYFromPrice(tempLine.endPrice));
         }
 
-        // 6. WATERMARK NAMA ASSET
-        g2.setColor(new Color(255, 255, 255, 30));
-        g2.setFont(new Font("Arial", Font.BOLD, 40));
+        // Gambar Garis Alert POI (Aktif)
+        Stroke dashed = new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0, new float[]{9}, 0);
+        g2.setStroke(dashed);
+        for (Double alertPrice : asset.getActiveAlerts()) {
+            int alertY = getYFromPrice(alertPrice);
+            if (alertY >= 0 && alertY <= chartHeight) {
+                g2.setColor(new Color(255, 82, 82, 200)); // Merah Alert
+                g2.drawLine(0, alertY, chartWidth, alertY);
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font("Arial", Font.BOLD, 10));
+                g2.drawString("🔔 POI: " + String.format("%.2f", alertPrice), 10, alertY - 5);
+            }
+        }
+        
+        // FITUR BARU: Gambar Garis Hover (Bayangan pas mouse geser masang alert)
+        if (isAlertMode) {
+            int hoverY = getYFromPrice(hoverPrice);
+            g2.setColor(new Color(255, 193, 7, 200)); // Kuning/Amber biar beda sama yang udah fix
+            Stroke hoverDashed = new BasicStroke(1.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0, new float[]{5}, 0);
+            g2.setStroke(hoverDashed);
+            g2.drawLine(0, hoverY, chartWidth, hoverY);
+            
+            // Box harga yang ngikutin mouse
+            g2.setColor(new Color(255, 193, 7));
+            g2.fillRoundRect(chartWidth + 2, hoverY - 7, RIGHT_MARGIN - 4, 14, 3, 3);
+            g2.setColor(Color.BLACK);
+            g2.setFont(new Font("Arial", Font.BOLD, 10));
+            g2.drawString(String.format("%.2f", hoverPrice), chartWidth + 5, hoverY + 4);
+            g2.drawString("KLIK KIRI BUAT PASANG", chartWidth / 2 - 50, hoverY - 5); // Instruksi di tengah garis
+        }
+
+        g2.setStroke(new BasicStroke(1)); 
+        g2.setClip(originalClip); 
+
+        g2.setColor(new Color(25, 27, 33)); g2.fillRect(chartWidth, 0, RIGHT_MARGIN, height);
+        g2.setColor(new Color(40, 44, 52)); g2.drawLine(chartWidth, 0, chartWidth, height);
+        g2.setColor(Color.LIGHT_GRAY); g2.setFont(new Font("Arial", Font.BOLD, 11));
+        for (int i = 20; i < chartHeight; i += 40) {
+            g2.drawString(String.format("%.2f", getPriceFromY(i)), chartWidth + 5, i);
+        }
+
+        g2.setColor(new Color(255, 255, 255, 30)); g2.setFont(new Font("Arial", Font.BOLD, 40));
         g2.drawString(asset.getSymbol(), 20, 50);
         
-        // --- UPDATE: Indikator Live Price Line (KECIL & RAPI) ---
         double currentPrice = asset.getCurrentPrice();
-        int liveY = chartHeight - (int) (((currentPrice - minPrice) / priceRange) * chartHeight) + offsetY;
+        int liveY = getYFromPrice(currentPrice);
         
-        g2.setColor(new Color(255, 152, 0, 180)); // Orange transparan
-        // Garis horizontal putus di batas chart, nggak tembus ke sidebar
+        g2.setColor(new Color(255, 152, 0, 180)); 
         g2.drawLine(0, liveY, chartWidth, liveY); 
         
-        // Label harga live di sidebar kanan (Dibuat kecil seperti TradingView)
-        g2.setColor(new Color(255, 152, 0)); // Background label
-        g2.fillRect(chartWidth + 2, liveY - 7, RIGHT_MARGIN - 4, 14); // Kotak lebih tipis
-        g2.setColor(Color.BLACK); // Warna font hitam biar kontras dan jelas
-        g2.setFont(new Font("Arial", Font.BOLD, 10)); // Font dikecilin
+        g2.setColor(new Color(255, 152, 0)); 
+        g2.fillRect(chartWidth + 2, liveY - 7, RIGHT_MARGIN - 4, 14); 
+        g2.setColor(Color.BLACK); g2.setFont(new Font("Arial", Font.BOLD, 10));
         g2.drawString(String.format("%.2f", currentPrice), chartWidth + 5, liveY + 4);
+
+        long elapsed = System.currentTimeMillis() - candles.get(candles.size() - 1).getTimestamp();
+        long remaining = asset.getCurrentTimeframeMs() - elapsed;
+        if (remaining < 0) remaining = 0;
+        
+        long sec = (remaining / 1000) % 60;
+        long min = (remaining / 60000) % 60;
+        long hr = (remaining / 3600000);
+        String countDownStr = hr > 0 ? String.format("%02d:%02d:%02d", hr, min, sec) : String.format("%02d:%02d", min, sec);
+        
+        g2.setColor(new Color(255, 152, 0, 180)); 
+        g2.drawString(countDownStr, chartWidth + 5, liveY + 18);
     }
 }

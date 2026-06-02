@@ -73,4 +73,58 @@ public class AssetDAO {
             return false;
         }
     }
+    
+    // [CREATE] Simpan Alert ke DB
+    public boolean saveAlert(String symbol, double targetPrice) {
+        String query = "INSERT INTO price_alerts (symbol, target_price) VALUES (?, ?)";
+        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, symbol);
+            pstmt.setDouble(2, targetPrice);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    // [READ] Load Alert aktif dari DB untuk satu aset
+    public List<Double> getActiveAlerts(String symbol) {
+        List<Double> alerts = new ArrayList<>();
+        String query = "SELECT target_price FROM price_alerts WHERE symbol = ? AND is_active = TRUE";
+        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, symbol);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    alerts.add(rs.getDouble("target_price"));
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return alerts;
+    }
+    
+    // [UPDATE] Matikan Alert di DB setelah tersentuh
+    public void deactivateAlert(String symbol, double targetPrice) {
+        String query = "UPDATE price_alerts SET is_active = FALSE WHERE symbol = ? AND target_price = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, symbol);
+            pstmt.setDouble(2, targetPrice);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    // [DELETE] Hapus Alert sepenuhnya dari Database
+    public void deleteAlert(String symbol, double targetPrice) {
+        String query = "DELETE FROM price_alerts WHERE symbol = ? AND target_price = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, symbol);
+            pstmt.setDouble(2, targetPrice);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
 }

@@ -2,24 +2,26 @@ package zenith.database;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.SQLException;
 
 public class DatabaseConnection {
-    private static Connection connection;
-    private static final String URL = "jdbc:mysql://localhost:3306/db_zenith";
-    private static final String USER = "root"; // Sesuaikan dengan user DB
-    private static final String PASSWORD = ""; // Sesuaikan dengan password DB
+    private static Connection conn;
 
-    // Enkapsulasi & Singleton: Hanya satu koneksi yang dibuat
     public static Connection getConnection() {
-        if (connection == null) {
+        if (conn == null) {
             try {
-                connection = DriverManager.getConnection(URL, USER, PASSWORD);
+                String url = "jdbc:mysql://localhost:3306/db_zenith";
+                String user = "root";
+                String pass = ""; // Sesuaikan jika xampp kamu pakai password
+
+                // --- TAMBAHKAN BARIS INI UNTUK MEMAKSA LOAD DRIVER ---
+                Class.forName("com.mysql.cj.jdbc.Driver");
+                
+                conn = DriverManager.getConnection(url, user, pass);
                 System.out.println("[DB] Terhubung ke MySQL!");
-            } catch (SQLException e) {
-                System.err.println("[DB ERROR] Koneksi gagal: " + e.getMessage());
+            } catch (Exception e) {
+                System.out.println("[DB ERROR] Koneksi gagal: " + e.getMessage());
             }
         }
-        return connection;
+        return conn;
     }
 }
